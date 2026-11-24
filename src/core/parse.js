@@ -46,6 +46,8 @@ export function parseActivity(name, bytes) {
     manufacturer: result.manufacturer ?? null,
     product: result.product ?? null,
     laps: result.laps ?? [],
+    serialNumber: result.serialNumber ?? null,
+    softwareVersion: result.softwareVersion ?? null,
     warnings: result.warnings ?? [],
     records,
     start: records[0].t,
@@ -118,10 +120,13 @@ function parseFit(bytes) {
     (manufacturer === 'garmin' && fileId.product ? fileId.product : null);
   const device = [manufacturer, product].filter((x) => x != null).map(prettyName).join(' ') || null;
 
+  const creator = messages.fileCreatorMesgs?.[0] ?? {};
   return {
     records,
     laps,
     warnings,
+    serialNumber: fileId.serialNumber ?? null,
+    softwareVersion: creator.softwareVersion ?? null,
     sport: typeof session.sport === 'string' ? session.sport : null,
     subSport: typeof session.subSport === 'string' ? session.subSport : null,
     manufacturer,
@@ -223,8 +228,13 @@ function parseGpx(bytes) {
   }
   const creator = gpx['@creator'];
   const type = String(gpx.trk?.[0]?.type ?? '').toLowerCase();
+  const warnings = [];
+  if (/garmin connect/i.test(String(creator ?? ''))) {
+    warnings.push('This GPX was exported from Garmin Connect, which leaves out power and laps. For the full data, use "Export Original" in Garmin Connect (a .zip with the .fit file inside).');
+  }
   return {
     records,
+    warnings,
     laps: [],
     sport: /cycl|bik|ride/.test(type) ? 'cycling' : /run/.test(type) ? 'running' : null,
     device: typeof creator === 'string' ? creator : null,

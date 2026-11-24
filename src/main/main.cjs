@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { autoUpdater } = require('electron-updater');
 
-const FILTERS = [{ name: 'Activity files', extensions: ['fit', 'tcx', 'gpx'] }, { name: 'All files', extensions: ['*'] }];
+const FILTERS = [{ name: 'Activity files', extensions: ['fit', 'tcx', 'gpx', 'zip'] }, { name: 'All files', extensions: ['*'] }];
 
 function createWindow() {
   const win = new BrowserWindow({

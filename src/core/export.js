@@ -1,5 +1,6 @@
 import { Encoder, Profile, Utils } from '@garmin/fitsdk';
 import { computeStats } from './merge.js';
+import { buildSummary } from './overrides.js';
 
 const DEG_TO_SEMI = 2 ** 31 / 180;
 const date = (t) => new Date(t * 1000);
@@ -8,16 +9,43 @@ const r = (v, d = 0) => (v == null ? null : Number(v.toFixed(d)));
 const clamp = (v, lo, hi) => (v == null ? null : Math.min(hi, Math.max(lo, v)));
 
 export const SPORTS = [
-  { id: 'cycling/virtualActivity', label: 'Virtual ride', sport: 'cycling', subSport: 'virtualActivity' },
-  { id: 'cycling/indoorCycling', label: 'Indoor ride', sport: 'cycling', subSport: 'indoorCycling' },
-  { id: 'cycling/road', label: 'Ride (road)', sport: 'cycling', subSport: 'road' },
-  { id: 'cycling/mountain', label: 'Mountain bike ride', sport: 'cycling', subSport: 'mountain' },
-  { id: 'cycling/generic', label: 'Ride', sport: 'cycling', subSport: 'generic' },
-  { id: 'running/virtualActivity', label: 'Virtual run', sport: 'running', subSport: 'virtualActivity' },
-  { id: 'running/treadmill', label: 'Treadmill run', sport: 'running', subSport: 'treadmill' },
-  { id: 'running/generic', label: 'Run', sport: 'running', subSport: 'generic' },
-  { id: 'generic/generic', label: 'Other', sport: 'generic', subSport: 'generic' },
-];
+  // [sport, subSport, label, group]
+  ['cycling', 'virtualActivity', 'Virtual ride', 'Cycling'],
+  ['cycling', 'indoorCycling', 'Indoor ride (trainer)', 'Cycling'],
+  ['cycling', 'road', 'Road ride', 'Cycling'],
+  ['cycling', 'gravelCycling', 'Gravel ride', 'Cycling'],
+  ['cycling', 'mountain', 'Mountain bike ride', 'Cycling'],
+  ['cycling', 'cyclocross', 'Cyclocross', 'Cycling'],
+  ['cycling', 'trackCycling', 'Track cycling', 'Cycling'],
+  ['cycling', 'commuting', 'Commute ride', 'Cycling'],
+  ['cycling', 'recumbent', 'Recumbent ride', 'Cycling'],
+  ['cycling', 'handCycling', 'Hand cycling', 'Cycling'],
+  ['cycling', 'generic', 'Ride', 'Cycling'],
+  ['eBiking', 'generic', 'E-bike ride', 'Cycling'],
+  ['eBiking', 'eBikeMountain', 'E-mountain bike ride', 'Cycling'],
+  ['running', 'virtualActivity', 'Virtual run', 'Running'],
+  ['running', 'treadmill', 'Treadmill run', 'Running'],
+  ['running', 'indoorRunning', 'Indoor run', 'Running'],
+  ['running', 'street', 'Road run', 'Running'],
+  ['running', 'trail', 'Trail run', 'Running'],
+  ['running', 'track', 'Track run', 'Running'],
+  ['running', 'ultra', 'Ultra run', 'Running'],
+  ['running', 'generic', 'Run', 'Running'],
+  ['walking', 'generic', 'Walk', 'Other'],
+  ['walking', 'indoorWalking', 'Indoor walk', 'Other'],
+  ['hiking', 'generic', 'Hike', 'Other'],
+  ['rowing', 'indoorRowing', 'Indoor rowing', 'Other'],
+  ['rowing', 'generic', 'Rowing', 'Other'],
+  ['fitnessEquipment', 'elliptical', 'Elliptical', 'Other'],
+  ['fitnessEquipment', 'stairClimbing', 'Stair stepper', 'Other'],
+  ['swimming', 'openWater', 'Open water swim', 'Other'],
+  ['crossCountrySkiing', 'generic', 'Cross-country skiing', 'Other'],
+  ['inlineSkating', 'generic', 'Inline skating', 'Other'],
+  ['training', 'cardioTraining', 'Cardio', 'Other'],
+  ['training', 'strengthTraining', 'Strength training', 'Other'],
+  ['hiit', 'generic', 'HIIT', 'Other'],
+  ['generic', 'generic', 'Other', 'Other'],
+].map(([sport, subSport, label, group]) => ({ id: `${sport}/${subSport}`, sport, subSport, label, group }));
 
 export function sportFromActivity(a) {
   const exact = SPORTS.find((s) => s.sport === a.sport && s.subSport === a.subSport);
@@ -26,27 +54,41 @@ export function sportFromActivity(a) {
   return bySport?.id ?? 'generic/generic';
 }
 
-function lapFields(stats) {
+const TCX_SPORT = { cycling: 'Biking', eBiking: 'Biking', running: 'Running' };
+
+// Summary values in FIT field names, from a buildSummary() result.
+function summaryFields(sum) {
   return {
-    totalElapsedTime: stats.elapsed,
-    totalTimerTime: stats.elapsed,
-    totalDistance: stats.distance,
-    avgSpeed: r(stats.speed?.avg, 3),
-    maxSpeed: r(stats.speed?.max, 3),
-    enhancedAvgSpeed: r(stats.speed?.avg, 3),
-    enhancedMaxSpeed: r(stats.speed?.max, 3),
-    avgHeartRate: r(stats.hr?.avg),
-    maxHeartRate: r(stats.hr?.max),
-    avgPower: r(stats.power?.avg),
-    maxPower: r(stats.power?.max),
-    normalizedPower: r(stats.np),
-    totalWork: stats.work != null ? Math.round(stats.work) : null,
-    avgCadence: r(stats.cadence?.avg),
-    maxCadence: r(stats.cadence?.max),
-    totalAscent: r(stats.ascent),
-    totalCalories: stats.calories ?? null,
-    avgTemperature: r(stats.temp?.avg),
-    maxTemperature: r(stats.temp?.max),
+    totalElapsedTime: sum.elapsed,
+    totalTimerTime: sum.elapsed,
+    totalDistance: sum.distance,
+    avgSpeed: r(sum.avgSpeed, 3),
+    maxSpeed: r(sum.maxSpeed, 3),
+    enhancedAvgSpeed: r(sum.avgSpeed, 3),
+    enhancedMaxSpeed: r(sum.maxSpeed, 3),
+    avgHeartRate: clamp(r(sum.avgHr), 0, 254),
+    maxHeartRate: clamp(r(sum.maxHr), 0, 254),
+    avgPower: r(sum.avgPower),
+    maxPower: r(sum.maxPower),
+    normalizedPower: r(sum.np),
+    thresholdPower: r(sum.ftp),
+    trainingStressScore: r(sum.tss, 1),
+    intensityFactor: r(sum.if, 3),
+    totalWork: sum.work != null ? Math.round(sum.work) : null,
+    avgCadence: clamp(r(sum.avgCadence), 0, 254),
+    maxCadence: clamp(r(sum.maxCadence), 0, 254),
+    totalCycles: r(sum.totalCycles),
+    totalAscent: r(sum.ascent),
+    totalDescent: r(sum.descent),
+    totalCalories: r(sum.calories),
+    avgTemperature: r(sum.avgTemp),
+    maxTemperature: r(sum.maxTemp),
+    totalTrainingEffect: clamp(r(sum.aerobicTE, 1), 0, 5),
+    totalAnaerobicTrainingEffect: clamp(r(sum.anaerobicTE, 1), 0, 5),
+    trainingLoadPeak: sum.trainingLoad,
+    totalGrit: sum.totalGrit,
+    avgFlow: sum.avgFlow,
+    jumpCount: r(sum.jumps),
   };
 }
 
@@ -55,8 +97,13 @@ function dropNulls(o) {
 }
 
 /**
- * @param merged result of mergeActivities
- * @param opts { sport: 'cycling/virtualActivity', manufacturer, product }
+ * @param merged result of mergeActivities (records already cleaned up)
+ * @param opts {
+ *   sport: 'cycling/virtualActivity',
+ *   device: { manufacturer, product },   // what the file says it was recorded on
+ *   serialNumber, softwareVersion (e.g. 26.12),
+ *   overrides                            // see overrides.js
+ * }
  * @returns Uint8Array
  */
 export function toFit(merged, opts = {}) {
@@ -67,18 +114,22 @@ export function toFit(merged, opts = {}) {
   const M = Profile.MesgNum;
   const write = (mesgNum, fields) => enc.onMesg(mesgNum, dropNulls(fields));
 
-  // Keep the base device's manufacturer when it is a known FIT manufacturer.
-  const manufacturer =
-    opts.manufacturer && Object.values(Profile.types.manufacturer).includes(opts.manufacturer)
-      ? opts.manufacturer
-      : 'development';
+  const known = Object.values(Profile.types.manufacturer);
+  const dev = opts.device ?? {};
+  const manufacturer = dev.manufacturer && known.includes(dev.manufacturer) ? dev.manufacturer : 'development';
+  const product = Number.isInteger(dev.product) ? dev.product : 0;
+  const serialNumber = Number.isInteger(opts.serialNumber) && opts.serialNumber > 0 ? opts.serialNumber : Math.floor(1e9 + Math.random() * 1e9);
+  const sw = typeof opts.softwareVersion === 'number' && Number.isFinite(opts.softwareVersion) ? opts.softwareVersion : null;
 
-  write(M.FILE_ID, {
-    type: 'activity',
+  write(M.FILE_ID, { type: 'activity', manufacturer, product, serialNumber, timeCreated: date(start) });
+  if (sw != null) write(M.FILE_CREATOR, { softwareVersion: Math.round(sw * 100) });
+  write(M.DEVICE_INFO, {
+    timestamp: date(start),
+    deviceIndex: 'creator',
     manufacturer,
-    product: opts.product ?? 0,
-    serialNumber: Math.floor(Math.random() * 2 ** 31),
-    timeCreated: date(start),
+    product,
+    serialNumber,
+    softwareVersion: sw,
   });
   write(M.EVENT, { timestamp: date(start), event: 'timer', eventType: 'start' });
 
@@ -101,9 +152,12 @@ export function toFit(merged, opts = {}) {
 
   write(M.EVENT, { timestamp: date(end), event: 'timer', eventType: 'stopAll' });
 
+  const total = buildSummary(computeStats(records), opts.overrides);
   laps.forEach((lap, i) => {
     const stats = computeStats(records, lap.start, lap.end);
     if (!stats.count) return;
+    // With a single lap the lap is the whole activity, so it gets the overrides too.
+    const sum = laps.length === 1 ? total : buildSummary(stats, {});
     const first = records.find((x) => x.t >= lap.start && x.lat != null && x.t <= lap.end);
     write(M.LAP, {
       messageIndex: i,
@@ -116,11 +170,20 @@ export function toFit(merged, opts = {}) {
       subSport: sport.subSport,
       startPositionLat: first ? Math.round(first.lat * DEG_TO_SEMI) : null,
       startPositionLong: first ? Math.round(first.lon * DEG_TO_SEMI) : null,
-      ...lapFields(stats),
+      ...summaryFields(sum),
+      // these are session-only in the FIT profile
+      totalTrainingEffect: undefined,
+      totalAnaerobicTrainingEffect: undefined,
+      trainingLoadPeak: undefined,
+      thresholdPower: undefined,
+      trainingStressScore: undefined,
+      intensityFactor: undefined,
+      totalGrit: undefined,
+      avgFlow: undefined,
+      jumpCount: undefined,
     });
   });
 
-  const total = computeStats(records);
   write(M.SESSION, {
     messageIndex: 0,
     timestamp: date(end),
@@ -132,7 +195,7 @@ export function toFit(merged, opts = {}) {
     subSport: sport.subSport,
     firstLapIndex: 0,
     numLaps: laps.length,
-    ...lapFields(total),
+    ...summaryFields(total),
   });
 
   const tzOffset = -new Date(end * 1000).getTimezoneOffset() * 60;
@@ -153,7 +216,7 @@ const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt
 
 export function toTcx(merged, opts = {}) {
   const sport = SPORTS.find((s) => s.id === opts.sport) ?? SPORTS[0];
-  const tcxSport = sport.sport === 'cycling' ? 'Biking' : sport.sport === 'running' ? 'Running' : 'Other';
+  const tcxSport = TCX_SPORT[sport.sport] ?? 'Other';
   const { records, laps, start } = merged;
   const out = [];
   out.push('<?xml version="1.0" encoding="UTF-8"?>');
@@ -167,17 +230,16 @@ export function toTcx(merged, opts = {}) {
   for (const lap of laps) {
     const s = computeStats(records, lap.start, lap.end);
     if (!s.count) continue;
+    const sum = buildSummary(s, laps.length === 1 ? opts.overrides : {});
     out.push(`<Lap StartTime="${iso(s.start)}">`);
     out.push(`<TotalTimeSeconds>${s.elapsed}</TotalTimeSeconds>`);
-    out.push(`<DistanceMeters>${r(s.distance ?? 0, 1)}</DistanceMeters>`);
+    out.push(`<DistanceMeters>${r(sum.distance ?? 0, 1)}</DistanceMeters>`);
     if (s.speed) out.push(`<MaximumSpeed>${r(s.speed.max, 3)}</MaximumSpeed>`);
-    out.push(`<Calories>${s.calories ?? 0}</Calories>`);
-    if (s.hr) {
-      out.push(`<AverageHeartRateBpm><Value>${r(s.hr.avg)}</Value></AverageHeartRateBpm>`);
-      out.push(`<MaximumHeartRateBpm><Value>${r(s.hr.max)}</Value></MaximumHeartRateBpm>`);
-    }
+    out.push(`<Calories>${r(sum.calories ?? 0)}</Calories>`);
+    if (sum.avgHr != null) out.push(`<AverageHeartRateBpm><Value>${r(sum.avgHr)}</Value></AverageHeartRateBpm>`);
+    if (sum.maxHr != null) out.push(`<MaximumHeartRateBpm><Value>${r(sum.maxHr)}</Value></MaximumHeartRateBpm>`);
     out.push('<Intensity>Active</Intensity>');
-    if (s.cadence) out.push(`<Cadence>${r(s.cadence.avg)}</Cadence>`);
+    if (sum.avgCadence != null) out.push(`<Cadence>${clamp(r(sum.avgCadence), 0, 254)}</Cadence>`);
     out.push('<TriggerMethod>Manual</TriggerMethod><Track>');
     for (const rec of records) {
       if (rec.t < lap.start || rec.t > lap.end) continue;

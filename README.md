@@ -4,13 +4,15 @@ A Windows desktop app that combines several recordings of the same workout (FIT,
 
 ## Using it
 
-1. **Add files.** Drag them onto the window or click **Add files…**. Any FIT/TCX/GPX from any app or device works.
+1. **Add files.** Drag them onto the window or click **Add files…**. Any FIT/TCX/GPX from any app or device works, as does a `.zip` from Garmin Connect's **Export Original**. A GPX exported from Garmin Connect has no power or laps, so use Export Original instead.
 2. **Check the data sources.** For each type of data (heart rate, power, cadence, speed, distance, GPS position, elevation, temperature) the app picks the file with the most data. Change it in **Data sources** if you like.
 3. **Line up the clocks, if needed.** Each file has a **Time shift** (seconds). **Auto-align** finds the shift by matching a data type both files contain (heart rate, power, cadence or speed).
 4. **Exceptions for a time range.** Drag across any chart to select a time range, then choose e.g. *Heart rate from None* (to drop a bad section) or from another file. Exceptions show as tinted bands in the charts.
 5. **Time range.** Keep the main file's span, the part where all files overlap, everything, or trim to a selection. Greyed areas in the charts are left out.
 6. **Options.** Set how large a gap gets filled by interpolation (watches often record every few seconds), where laps come from, and the activity type.
-7. **Export.** Choose FIT (recommended for Strava, Garmin Connect, TrainingPeaks, intervals.icu), TCX or GPX, then click **Export…**.
+7. **Output file.** Choose the device or app the file says it was recorded with (a searchable list of every Garmin device the FIT format knows, plus apps and brands like Zwift, MyWhoosh, TrainerRoad and Wahoo), the activity type, the serial number and software version, and whether to randomize the file ID so a duplicate can be uploaded.
+8. **Override data (optional).** Replace calculated values: calories, distance, ascent/descent, training effect, exercise load, FTP, NP, TSS, IF, cycles, grit, flow, jumps and average HR/cadence/power. You can also discard heart rate or power values above a limit, or adjust power by a percentage or a number of watts. With an FTP, TSS and IF are calculated for you.
+9. **Export.** Choose FIT (recommended for Strava, Garmin Connect, TrainingPeaks, intervals.icu), TCX or GPX, then click **Export…**.
 
 Before uploading the merged file, delete the original activities from Strava / Garmin Connect, or you will end up with duplicates.
 

@@ -3,6 +3,9 @@ import { parseActivity } from '../core/parse.js';
 import { STREAMS, streamByKey, hasStream } from '../core/streams.js';
 import { mergeActivities, defaultSources, rangePreset, autoAlign, computeStats, sampleAt, fileSpan, sourceAt } from '../core/merge.js';
 import { toFit, toTcx, toGpx, SPORTS, sportFromActivity } from '../core/export.js';
+import { adjustRecords, buildSummary } from '../core/overrides.js';
+import { deviceCatalog, findDevice } from '../core/devices.js';
+import { expandZips } from '../core/zip.js';
 
 const FILE_COLORS = ['#3b82f6', '#f97316', '#10b981', '#a855f7', '#ec4899', '#06b6d4'];
 const $ = (id) => document.getElementById(id);
@@ -21,7 +24,75 @@ const state = {
   view: null,
   merged: null,
   nextId: 1,
+  // output file
+  device: 'auto', // 'auto' or a device id from devices.js
+  serial: '',
+  software: '',
+  randomizeId: true,
+  // overrides
+  ovOpen: false,
+  ov: {}, // key -> input string
+  distUnit: 'km',
+  elevUnit: 'm',
+  powerAdjustMode: 'percent',
 };
+
+// Fields of the "Override data" card. Empty = calculated automatically.
+const OV_GROUPS = [
+  ['Totals', [
+    ['totalCalories', 'Total calories', 'kcal'],
+    ['totalDistance', 'Total distance', 'dist'],
+    ['totalAscent', 'Total ascent', 'elev'],
+    ['totalDescent', 'Total descent', 'elev'],
+    ['totalCycles', 'Total cycles (crank revolutions)', ''],
+  ]],
+  ['Training', [
+    ['aerobicTE', 'Aerobic training effect', '0–5'],
+    ['anaerobicTE', 'Anaerobic training effect', '0–5'],
+    ['trainingLoad', 'Exercise load', ''],
+    ['ftp', 'FTP / threshold power', 'W'],
+    ['np', 'Normalized power (NP)', 'W'],
+    ['tss', 'Training stress score (TSS)', ''],
+    ['if', 'Intensity factor (IF)', ''],
+  ]],
+  ['Averages', [
+    ['avgHr', 'Average heart rate', 'bpm'],
+    ['avgCadence', 'Average cadence', 'rpm'],
+    ['avgPower', 'Average power', 'W'],
+  ]],
+  ['Mountain bike', [
+    ['totalGrit', 'Total grit', ''],
+    ['avgFlow', 'Average flow', ''],
+    ['jumps', 'Jumps', ''],
+  ]],
+  ['Clean up data', [
+    ['maxHr', 'Discard heart rate values over', 'bpm'],
+    ['maxPower', 'Discard power values over', 'W'],
+    ['powerAdjust', 'Adjust power by', 'adj'],
+  ]],
+];
+
+function ovValues() {
+  const num = (k) => {
+    const v = state.ov[k];
+    if (v == null || String(v).trim() === '') return undefined;
+    const n = Number(String(v).replace(',', '.'));
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const out = {};
+  for (const [, fields] of OV_GROUPS) for (const [k] of fields) if (k !== 'powerAdjust') out[k] = num(k);
+  if (out.totalDistance != null) out.totalDistance *= state.distUnit === 'mi' ? 1609.344 : 1000;
+  for (const k of ['totalAscent', 'totalDescent']) if (out[k] != null && state.elevUnit === 'ft') out[k] *= 0.3048;
+  const adj = num('powerAdjust');
+  if (adj != null) out.powerAdjust = { value: adj, mode: state.powerAdjustMode };
+  return out;
+}
+
+function outputDevice() {
+  if (state.device !== 'auto') return findDevice(state.device);
+  const a = primaryFile()?.activity;
+  return a ? { manufacturer: a.manufacturer, product: a.product, label: a.device } : null;
+}
 
 // ---------------------------------------------------------------- helpers
 function h(tag, attrs = {}, ...children) {
@@ -141,6 +212,12 @@ function syncThemeButtons() {
 // ---------------------------------------------------------------- loading
 async function addFiles(list) {
   let added = 0;
+  try {
+    list = expandZips(list);
+  } catch (err) {
+    toast(err.message, 'error', 7000);
+    return;
+  }
   for (const { name, data, path } of list) {
     try {
       const activity = parseActivity(name, data);
@@ -371,20 +448,103 @@ function optionsCard() {
       h('select', { 'aria-label': 'Laps', onchange: (e) => { state.lapSource = e.target.value; render(); } },
         h('option', { value: 'auto', selected: state.lapSource === 'auto' }, 'From main file'),
         state.files.map((f) => h('option', { value: f.id, selected: state.lapSource === f.id }, `${f.activity.name} (${f.activity.laps.length || 1})`)),
-        h('option', { value: 'single', selected: state.lapSource === 'single' }, 'One lap for everything'))),
-    h('div', { class: 'field' }, h('label', {}, 'Activity type'),
-      h('select', { 'aria-label': 'Activity type', onchange: (e) => { state.sport = e.target.value; render(); } },
-        SPORTS.map((s) => h('option', { value: s.id, selected: s.id === state.sport }, s.label))))
+        h('option', { value: 'single', selected: state.lapSource === 'single' }, 'One lap for everything')))
   );
+}
+
+function sportSelect() {
+  const groups = [...new Set(SPORTS.map((s) => s.group))];
+  return h('select', { 'aria-label': 'Activity type', onchange: (e) => { state.sport = e.target.value; render(); } },
+    groups.map((g) => h('optgroup', { label: g }, SPORTS.filter((s) => s.group === g).map((s) => h('option', { value: s.id, selected: s.id === state.sport }, s.label)))));
+}
+
+function devicePicker() {
+  const c = deviceCatalog();
+  const primary = primaryFile()?.activity;
+  const groups = [
+    ['Popular Garmin devices', c.popular],
+    ['Apps & other brands', c.apps],
+    ['All Garmin devices', c.garmin],
+    ['More brands', c.other],
+  ];
+  const select = h('select', { 'aria-label': 'Device in output file', class: 'device-select', onchange: (e) => { state.device = e.target.value; render(); } });
+  const fill = (q = '') => {
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    const match = (d) => words.every((w) => d.label.toLowerCase().includes(w));
+    const opts = [h('option', { value: 'auto', selected: state.device === 'auto' }, `Same as main file (${primary?.device ?? 'unknown'})`)];
+    for (const [label, list] of groups) {
+      const items = list.filter(match);
+      if (items.length) opts.push(h('optgroup', { label }, items.map((d) => h('option', { value: d.id, selected: d.id === state.device }, d.label))));
+    }
+    select.replaceChildren(...opts);
+  };
+  fill();
+  const search = h('input', { type: 'search', placeholder: 'Search, e.g. 955, Edge, Zwift…', 'aria-label': 'Search devices', class: 'device-search',
+    oninput: (e) => fill(e.target.value) });
+  return h('div', { class: 'device-picker' }, search, select);
+}
+
+function outputCard() {
+  const dev = outputDevice();
+  return card(
+    'Output file',
+    'var(--s-speed)',
+    h('div', { class: 'field' }, h('label', {}, 'Device / app'), devicePicker()),
+    h('p', { class: 'hint' }, 'Garmin Connect and Strava show this as the device the activity was recorded with', dev?.label ? `: ${dev.label}.` : '.'),
+    h('div', { class: 'field' }, h('label', {}, 'Activity type'), sportSelect()),
+    h('div', { class: 'field' }, h('label', {}, 'Serial number'),
+      h('input', { type: 'text', inputmode: 'numeric', placeholder: state.randomizeId ? 'random' : String(primaryFile()?.activity.serialNumber ?? 'random'), value: state.serial,
+        'aria-label': 'Serial number', onchange: (e) => { state.serial = e.target.value.replace(/\D/g, ''); render(); } })),
+    h('div', { class: 'field' }, h('label', {}, 'Software version'),
+      h('input', { type: 'text', inputmode: 'decimal', placeholder: 'e.g. 26.12', value: state.software, 'aria-label': 'Software version',
+        onchange: (e) => { state.software = e.target.value.trim(); render(); } })),
+    h('label', { class: 'check' },
+      h('input', { type: 'checkbox', checked: state.randomizeId, onchange: (e) => { state.randomizeId = e.target.checked; render(); } }),
+      h('span', {}, h('strong', {}, 'Randomize file ID'), h('small', {}, ' lets you upload the file even when the original activity is already on Garmin Connect or Strava')))
+  );
+}
+
+function overridesCard() {
+  const count = Object.values(state.ov).filter((v) => String(v ?? '').trim() !== '').length;
+  const unitToggle = (which) => {
+    const opts = which === 'dist' ? ['km', 'mi'] : which === 'elev' ? ['m', 'ft'] : ['percent', 'watts'];
+    const cur = which === 'dist' ? state.distUnit : which === 'elev' ? state.elevUnit : state.powerAdjustMode;
+    return h('span', { class: 'seg' }, opts.map((o) =>
+      h('button', { class: o === cur ? 'on' : '', onclick: () => {
+        if (which === 'dist') state.distUnit = o; else if (which === 'elev') state.elevUnit = o; else state.powerAdjustMode = o;
+        render();
+      } }, o === 'percent' ? '%' : o === 'watts' ? 'W' : o)));
+  };
+  const field = ([key, label, unit]) =>
+    h('label', { class: `ov-field${String(state.ov[key] ?? '').trim() !== '' ? ' set' : ''}` },
+      h('span', { class: 'ov-label' }, label),
+      h('span', { class: 'ov-input' },
+        h('input', { type: 'text', inputmode: 'decimal', value: state.ov[key] ?? '', placeholder: 'auto',
+          onchange: (e) => { state.ov[key] = e.target.value.trim(); render(); } }),
+        ['dist', 'elev', 'adj'].includes(unit) ? unitToggle(unit) : unit && h('span', { class: 'unit' }, unit)));
+
+  const head = h('button', { class: 'ov-head', 'aria-expanded': String(state.ovOpen), onclick: () => { state.ovOpen = !state.ovOpen; render(); } },
+    h('span', { class: 'chev' }, state.ovOpen ? '▾' : '▸'),
+    h('span', {}, 'Override data'),
+    h('small', {}, count ? `${count} value${count === 1 ? '' : 's'} set` : 'optional: replace calculated values and clean up data'),
+    count > 0 && h('span', { class: 'btn small ghost', role: 'button', onclick: (e) => { e.stopPropagation(); state.ov = {}; render(); } }, 'Clear all'));
+  return h('section', { class: 'card wide overrides', style: '--accent-c:var(--s-cadence)' },
+    head,
+    state.ovOpen && h('div', { class: 'ov-groups' },
+      OV_GROUPS.map(([title, fields]) => h('div', { class: 'ov-group' }, h('h4', {}, title), fields.map(field)))),
+    state.ovOpen && h('p', { class: 'hint' }, 'Leave a field empty to use the calculated value. With an FTP, TSS and IF are calculated for you. Values apply to the whole activity (and to the lap, when there is only one).'));
 }
 
 function resultCard() {
   const m = state.merged;
   if (!m || !m.records.length) return card('Result', 'var(--s-hr)', h('p', { class: 'muted' }, 'Nothing to export in this time range.'));
   const s = computeStats(m.records);
+  const sum = buildSummary(s, ovValues());
+  const ed = (...keys) => keys.some((k) => sum.edited.includes(k));
   const r0 = Math.round;
-  const tile = (key, label, value, sub) =>
-    value != null && h('div', { class: 'tile', style: `--c:${key ? streamColor(key) : 'var(--accent)'}` }, h('span', {}, label), h('strong', {}, value), sub && h('small', {}, sub));
+  const tile = (key, label, value, sub, edited = false) =>
+    value != null && h('div', { class: `tile${edited ? ' edited' : ''}`, style: `--c:${key ? streamColor(key) : 'var(--accent)'}`, title: edited ? 'Overridden value' : null },
+      h('span', {}, label, edited && h('em', {}, 'edited')), h('strong', {}, value), sub && h('small', {}, sub));
   return card(
     'Result',
     'var(--s-hr)',
@@ -392,13 +552,15 @@ function resultCard() {
       'div',
       { class: 'tiles' },
       tile(null, 'Duration', fmtDuration(s.elapsed), `${m.laps.length} lap${m.laps.length === 1 ? '' : 's'}`),
-      tile('distance', 'Distance', s.distance != null ? `${(s.distance / 1000).toFixed(2)} km` : null),
-      tile('hr', 'Heart rate', s.hr && `${r0(s.hr.avg)} bpm`, s.hr && `max ${s.hr.max}`),
-      tile('power', 'Power', s.power && `${r0(s.power.avg)} W`, s.power && `NP ${r0(s.np ?? s.power.avg)} · max ${s.power.max}`),
-      tile('cadence', 'Cadence', s.cadence && `${r0(s.cadence.avg)} rpm`),
+      tile('distance', 'Distance', sum.distance != null ? `${(sum.distance / 1000).toFixed(2)} km` : null, null, ed('distance')),
+      tile('hr', 'Heart rate', sum.avgHr != null ? `${r0(sum.avgHr)} bpm` : null, sum.maxHr != null ? `max ${sum.maxHr}` : null, ed('avgHr')),
+      tile('power', 'Power', sum.avgPower != null ? `${r0(sum.avgPower)} W` : null, sum.np != null ? `NP ${r0(sum.np)} · max ${sum.maxPower ?? '–'}` : null, ed('avgPower', 'np')),
+      tile('cadence', 'Cadence', sum.avgCadence != null ? `${r0(sum.avgCadence)} rpm` : null, null, ed('avgCadence')),
       tile('speed', 'Speed', s.speed && `${(s.speed.avg * 3.6).toFixed(1)} km/h`, s.speed && `max ${(s.speed.max * 3.6).toFixed(1)}`),
-      tile('alt', 'Elevation gain', s.ascent != null ? `${r0(s.ascent)} m` : null),
-      tile('temp', 'Energy', s.work != null ? `${r0(s.work / 1000)} kJ` : null)
+      tile('alt', 'Elevation', sum.ascent != null ? `+${r0(sum.ascent)} m` : null, sum.descent != null ? `−${r0(sum.descent)} m` : null, ed('ascent', 'descent')),
+      tile('temp', 'Calories', sum.calories != null ? `${r0(sum.calories)} kcal` : null, s.work != null ? `${r0(s.work / 1000)} kJ` : null, ed('calories')),
+      tile('cadence', 'Training load', sum.tss != null ? `TSS ${r0(sum.tss)}` : null, sum.if != null ? `IF ${sum.if.toFixed(2)}${sum.ftp ? ` · FTP ${r0(sum.ftp)}` : ''}` : null, ed('tss', 'if', 'ftp')),
+      tile('hr', 'Training effect', sum.aerobicTE != null || sum.anaerobicTE != null ? `${sum.aerobicTE ?? '–'} / ${sum.anaerobicTE ?? '–'}` : null, 'aerobic / anaerobic', ed('aerobicTE', 'anaerobicTE'))
     ),
     coverageWarnings(m)
   );
@@ -422,7 +584,7 @@ function emptyState() {
     h('div', { class: 'drop-target' },
       icon('upload', 'upload-icon'),
       h('h2', {}, 'Drop your activity files here'),
-      h('p', {}, 'FIT, TCX or GPX from any app or device. Add two or more recordings of the same workout, for example an indoor ride and your watch.'),
+      h('p', {}, 'FIT, TCX, GPX or a .zip from Garmin Connect "Export Original", from any app or device. Add two or more recordings of the same workout, for example an indoor ride and your watch.'),
       h('button', { class: 'btn primary', onclick: openDialog }, 'Choose files…'),
       h('div', { class: 'legend' }, STREAMS.map((s) => h('span', { style: `--c:${streamColor(s.key)}` }, s.label))))
   );
@@ -432,7 +594,7 @@ function renderFilesView() {
   const v = $('view-files');
   v.replaceChildren();
   if (!state.files.length) return v.append(emptyState());
-  v.append(filesTable(), h('div', { class: 'cards' }, resultCard(), rangeCard(), optionsCard(), exceptionsCard()));
+  v.append(filesTable(), h('div', { class: 'cards' }, resultCard(), outputCard(), rangeCard(), optionsCard(), exceptionsCard(), overridesCard()));
 }
 
 // ---------------------------------------------------------------- charts view
@@ -585,7 +747,10 @@ async function exportFile() {
   if (!m?.records.length) return;
   const format = $('format').value;
   const primary = primaryFile();
-  const opts = { sport: state.sport, manufacturer: primary.activity.manufacturer, product: primary.activity.product };
+  const dev = outputDevice();
+  const serial = state.serial ? Number(state.serial) : state.randomizeId ? null : primary.activity.serialNumber;
+  const sw = state.software ? Number(state.software.replace(',', '.')) : primary.activity.softwareVersion != null ? primary.activity.softwareVersion / 100 : null;
+  const opts = { sport: state.sport, device: dev, serialNumber: serial, softwareVersion: Number.isFinite(sw) ? sw : null, overrides: ovValues() };
   let data;
   try {
     data = format === 'fit' ? toFit(m, opts) : format === 'tcx' ? toTcx(m, opts) : toGpx(m, opts);
@@ -616,6 +781,7 @@ function render() {
   if (state.files.length) {
     const range = currentRange();
     state.merged = range ? mergeActivities({ ...mergeConfig(), range }) : { records: [], laps: [] };
+    state.merged.records = adjustRecords(state.merged.records, ovValues());
   } else {
     state.merged = null;
   }

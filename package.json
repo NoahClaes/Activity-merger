@@ -1,7 +1,7 @@
 {
   "name": "activity-merger",
   "productName": "Activity Merger",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Combine FIT, TCX and GPX recordings of the same workout and choose which data comes from which file.",
   "type": "module",
   "main": "src/main/main.cjs",
@@ -24,6 +24,7 @@
     "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2",
     "fast-xml-parser": "^5.12.1",
+    "fflate": "^0.8.3",
     "uplot": "^1.6.32"
   },
   "build": {

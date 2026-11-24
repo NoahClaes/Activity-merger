@@ -173,6 +173,7 @@ select, input {
   font: inherit; color: var(--text); background: var(--surface);
   border: 1px solid var(--border); border-radius: 7px; padding: 4px 7px; min-width: 0;
 }
+input[type='checkbox'] { padding: 0; }
 select:focus, input:focus, .btn:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
 input.narrow { width: 70px; }
 
@@ -287,6 +288,44 @@ td.num {
 .exc-stream { font-weight: 700; color: var(--c); }
 .exc-src { display: flex; align-items: center; gap: 5px; color: var(--muted); overflow: hidden; white-space: nowrap; }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+/* ---------- output file + overrides */
+.cards > .wide { grid-column: 1 / -1; }
+.device-picker { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.device-select { width: 100%; }
+.check { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; cursor: pointer; }
+.check input { accent-color: var(--accent); width: 16px; height: 16px; margin: 2px 0 0; flex: none; }
+.check small { color: var(--muted); }
+.tile span em {
+  font-style: normal; font-size: 10px; margin-left: 6px; padding: 0 5px; border-radius: 4px;
+  background: var(--c); color: #fff; vertical-align: 1px; letter-spacing: 0.03em;
+}
+.overrides { padding: 0; }
+.ov-head {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 16px;
+  font: inherit; font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--text); background: transparent; border: 0; cursor: pointer; text-align: left;
+}
+.ov-head:hover { background: var(--surface-2); }
+.ov-head small { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--muted); flex: 1; }
+.ov-head .btn { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.ov-head .chev { color: var(--s-cadence); width: 12px; }
+.ov-groups {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px 22px;
+  padding: 4px 16px 6px; border-top: 1px solid var(--border);
+}
+.overrides > .hint { padding: 0 16px 14px; }
+.ov-group h4 { margin: 12px 0 6px; font-size: 12.5px; color: var(--s-cadence); text-transform: uppercase; letter-spacing: 0.05em; }
+.ov-field { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 3px 0; }
+.ov-label { font-size: 13px; }
+.ov-input { display: grid; grid-template-columns: 84px 60px; align-items: center; gap: 6px; }
+.ov-input input { width: 84px; text-align: right; }
+.ov-field.set input { border-color: var(--s-cadence); background: color-mix(in srgb, var(--s-cadence) 8%, var(--surface)); font-weight: 600; }
+.ov-input .unit { font-size: 12px; color: var(--muted); }
+.ov-input .seg { justify-self: start; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button { font: inherit; font-size: 11.5px; border: 0; padding: 2px 6px; background: var(--surface-2); color: var(--muted); cursor: pointer; }
+.seg button.on { background: var(--s-cadence); color: #fff; }
 
 /* ---------- charts */
 .charts { display: flex; flex-direction: column; gap: 14px; }

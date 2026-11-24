@@ -211,18 +211,27 @@ export function computeStats(records, from = -Infinity, to = Infinity) {
   const anyMotion = rs.some((r) => r.speed != null || r.power != null);
   s.moving = anyMotion ? rs.filter((r) => (r.speed ?? 0) > 0.5 || (r.power ?? 0) > 0).length : s.elapsed;
 
-  // Ascent with 1 m hysteresis to ignore noise.
+  // Ascent/descent with 1 m hysteresis to ignore noise.
   let ascent = 0;
+  let descent = 0;
   let ref = null;
   for (const r of rs) {
     if (r.alt == null) continue;
-    if (ref == null || r.alt < ref) ref = r.alt;
+    if (ref == null) ref = r.alt;
     else if (r.alt - ref >= 1) {
       ascent += r.alt - ref;
       ref = r.alt;
+    } else if (ref - r.alt >= 1) {
+      descent += ref - r.alt;
+      ref = r.alt;
     }
   }
-  s.ascent = rs.some((r) => r.alt != null) ? ascent : null;
+  const hasAlt = rs.some((r) => r.alt != null);
+  s.ascent = hasAlt ? ascent : null;
+  s.descent = hasAlt ? descent : null;
+
+  // Crank revolutions (1 Hz records): cadence / 60 per second.
+  if (s.cadence) s.cycles = Math.round(rs.reduce((acc, r) => acc + (r.cadence ?? 0) / 60, 0));
 
   if (s.power) {
     let work = 0;

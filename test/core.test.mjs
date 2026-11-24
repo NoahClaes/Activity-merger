@@ -131,3 +131,98 @@ test('GPX export refuses an activity without positions', () => {
   const m = mergeActivities({ files, sources: defaultSources(files), overrides: [], range: rangePreset(files, 'w'), maxGap: 10 });
   assert.throws(() => toGpx(m), /GPS positions/);
 });
+
+// ---------------------------------------------------------------- overrides, device, zip
+import { Decoder, Stream } from '@garmin/fitsdk';
+import { zipSync } from 'fflate';
+import { adjustRecords, buildSummary } from '../src/core/overrides.js';
+import { deviceCatalog, findDevice } from '../src/core/devices.js';
+import { expandZips } from '../src/core/zip.js';
+
+function decode(bytes) {
+  const d = new Decoder(Stream.fromByteArray(bytes));
+  assert.ok(d.checkIntegrity());
+  return d.read().messages;
+}
+
+test('FIT export writes the chosen device, serial and software version', () => {
+  const m = mergeActivities(zwiftPlusWatch());
+  const dev = findDevice(deviceCatalog().popular.find((d) => /955/.test(d.label)).id);
+  const msgs = decode(toFit(m, { device: dev, serialNumber: 3456789012, softwareVersion: 26.12 }));
+  assert.equal(msgs.fileIdMesgs[0].manufacturer, 'garmin');
+  assert.equal(msgs.fileIdMesgs[0].garminProduct, 'fr955');
+  assert.equal(msgs.fileIdMesgs[0].serialNumber, 3456789012);
+  assert.equal(msgs.fileCreatorMesgs[0].softwareVersion, 2612);
+  assert.equal(msgs.deviceInfoMesgs[0].deviceIndex, 'creator');
+  assert.equal(msgs.deviceInfoMesgs[0].softwareVersion, 26.12);
+});
+
+test('FIT export can claim an app such as MyWhoosh', () => {
+  const m = mergeActivities(zwiftPlusWatch());
+  const msgs = decode(toFit(m, { device: findDevice('mfr:mywhoosh') }));
+  assert.equal(msgs.fileIdMesgs[0].manufacturer, 'mywhoosh');
+});
+
+test('random serial numbers differ between exports', () => {
+  const m = mergeActivities(zwiftPlusWatch());
+  const a = decode(toFit(m, {})).fileIdMesgs[0].serialNumber;
+  const b = decode(toFit(m, {})).fileIdMesgs[0].serialNumber;
+  assert.notEqual(a, b);
+});
+
+test('summary overrides end up in the FIT session', () => {
+  const m = mergeActivities(zwiftPlusWatch());
+  const ov = { totalCalories: 900, totalDistance: 42000, totalAscent: 300, aerobicTE: 3.4, anaerobicTE: 1.2, trainingLoad: 150, ftp: 250, avgHr: 140, jumps: 3, totalGrit: 12.5, avgFlow: 4.2 };
+  const s = decode(toFit(m, { overrides: ov })).sessionMesgs[0];
+  assert.equal(s.totalCalories, 900);
+  assert.equal(s.totalDistance, 42000);
+  assert.equal(s.totalAscent, 300);
+  assert.equal(s.totalTrainingEffect, 3.4);
+  assert.equal(s.totalAnaerobicTrainingEffect, 1.2);
+  assert.equal(s.trainingLoadPeak, 150);
+  assert.equal(s.thresholdPower, 250);
+  assert.equal(s.avgHeartRate, 140);
+  assert.equal(s.jumpCount, 3);
+  assert.ok(Math.abs(s.totalGrit - 12.5) < 0.01);
+  // IF and TSS calculated from FTP and NP
+  assert.ok(s.intensityFactor > 0.9 && s.intensityFactor < 1.0, `IF ${s.intensityFactor}`);
+  assert.ok(s.trainingStressScore > 80 && s.trainingStressScore < 100, `TSS ${s.trainingStressScore}`);
+});
+
+test('explicit TSS/IF win over calculated ones', () => {
+  const sum = buildSummary({ elapsed: 3600, np: 250 }, { ftp: 250, tss: 77, if: 0.81 });
+  assert.equal(sum.tss, 77);
+  assert.equal(sum.if, 0.81);
+  assert.deepEqual(sum.edited.sort(), ['ftp', 'if', 'tss']);
+});
+
+test('discard and adjust values in records', () => {
+  const recs = [{ t: 1, hr: 120, power: 200 }, { t: 2, hr: 230, power: 1800 }, { t: 3, hr: 130, power: 0 }];
+  const a = adjustRecords(recs, { maxHr: 200, maxPower: 1500, powerAdjust: { value: 10, mode: 'percent' } });
+  assert.deepEqual(a.map((r) => [r.hr, r.power]), [[120, 220], [null, null], [130, 0]]);
+  const b = adjustRecords(recs, { powerAdjust: { value: -15, mode: 'watts' } });
+  assert.deepEqual(b.map((r) => r.power), [185, 1785, 0]);
+  assert.equal(recs[0].power, 200, 'original records untouched');
+});
+
+test('device catalog has popular devices, apps and all Garmin products', () => {
+  const c = deviceCatalog();
+  assert.ok(c.popular.some((d) => d.label === 'Garmin Forerunner 955 / 955 Solar'));
+  for (const app of ['Zwift', 'MyWhoosh', 'TrainerRoad']) assert.ok(c.apps.some((d) => d.label === app), app);
+  assert.ok(c.garmin.length > 300);
+});
+
+test('zip files are expanded into the activity files inside', () => {
+  const fit = new Uint8Array(readFileSync(join(dir, 'zwift.fit')));
+  const zip = zipSync({ '12345_ACTIVITY.fit': fit, 'readme.txt': new TextEncoder().encode('hi') });
+  const items = expandZips([{ name: 'export.zip', data: zip }]);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].name, '12345_ACTIVITY.fit');
+  assert.equal(parseActivity(items[0].name, items[0].data).streamCounts.power, 3600);
+});
+
+test('Garmin Connect GPX export gets a warning', () => {
+  const gpx = '<?xml version="1.0"?><gpx creator="Garmin Connect" version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg><trkpt lat="50" lon="4"><time>2026-11-21T10:00:00Z</time></trkpt><trkpt lat="50.0001" lon="4"><time>2026-11-21T10:00:01Z</time></trkpt></trkseg></trk></gpx>';
+  const a = parseActivity('a.gpx', new TextEncoder().encode(gpx));
+  assert.match(a.warnings[0], /Export Original/);
+});
