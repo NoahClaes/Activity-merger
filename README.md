@@ -40,4 +40,4 @@ GitHub Actions (`.github/workflows/build-windows.yml`) builds on Windows for eve
 - `Activity Merger-<version>-setup.exe`, the installer (Start menu entry, desktop shortcut, uninstaller)
 - `Activity Merger-<version>-portable.exe`, which runs without installing
 
-Download them from the run's **Artifacts**. Pushing a tag like `v1.0.0` also publishes them as a GitHub Release.
+Download them from the run's **Artifacts**. To publish a GitHub Release, push a tag like `v1.0.0`, or run the workflow manually (**Actions → Build Windows installer → Run workflow**) and enter a version such as `v1.0.1`.
