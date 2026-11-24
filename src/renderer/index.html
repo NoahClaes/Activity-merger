@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+    <title>Activity Merger</title>
+    <link rel="stylesheet" href="../../dist/uPlot.min.css" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Activity Merger</span>
+      </div>
+      <div class="topbar-actions">
+        <button id="open-btn" class="btn">Add files…</button>
+        <div class="export-group">
+          <select id="format" aria-label="Export format">
+            <option value="fit">FIT</option>
+            <option value="tcx">TCX</option>
+            <option value="gpx">GPX</option>
+          </select>
+          <button id="export-btn" class="btn primary" disabled>Export…</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar" id="sidebar"></aside>
+      <section class="content">
+        <div id="selection-bar" class="selection-bar" hidden></div>
+        <div id="charts" class="charts"></div>
+        <div id="empty" class="empty">
+          <div class="drop-target">
+            <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <h2>Drop your activity files here</h2>
+            <p>FIT, TCX or GPX, from any app or device. Add two or more recordings of the same workout, for example a Zwift ride and your watch.</p>
+            <button id="open-btn-2" class="btn primary">Choose files…</button>
+          </div>
+        </div>
+      </section>
+    </main>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <div id="drop-overlay" class="drop-overlay" hidden><div>Drop to add files</div></div>
+    <input id="file-input" type="file" multiple accept=".fit,.tcx,.gpx" hidden />
+    <script src="../../dist/renderer.js"></script>
+  </body>
+</html>

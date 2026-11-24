@@ -1,0 +1,53 @@
+{
+  "name": "activity-merger",
+  "productName": "Activity Merger",
+  "version": "1.0.0",
+  "description": "Combine FIT, TCX and GPX recordings of the same workout and choose which data comes from which file.",
+  "type": "module",
+  "main": "src/main/main.cjs",
+  "author": "Activity Merger",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/renderer/app.js --bundle --format=iife --target=chrome120 --outfile=dist/renderer.js --minify --sourcemap && cp node_modules/uplot/dist/uPlot.min.css dist/",
+    "start": "npm run build && electron .",
+    "test": "node --test test/core.test.mjs",
+    "samples": "node test/make-samples.mjs",
+    "dist:win": "npm run build && electron-builder --win nsis --x64"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@garmin/fitsdk": "^21.222.0",
+    "fast-xml-parser": "^5.12.1",
+    "uplot": "^1.6.32",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2"
+  },
+  "build": {
+    "appId": "app.activitymerger.desktop",
+    "productName": "Activity Merger",
+    "files": [
+      "src/main/**",
+      "src/renderer/index.html",
+      "src/renderer/styles.css",
+      "dist/**",
+      "build/icon.png",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Activity Merger"
+    }
+  }
+}
