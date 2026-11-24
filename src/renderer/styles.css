@@ -128,6 +128,24 @@ a { color: var(--accent); }
 .export-group { display: flex; gap: 6px; }
 .topbar select { background: rgba(255, 255, 255, 0.95); color: #18202c; border-color: transparent; }
 
+.version-chip {
+  font: inherit; font-size: 11.5px; font-weight: 600; color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px; padding: 1px 9px; cursor: pointer;
+}
+.version-chip:hover { background: rgba(255, 255, 255, 0.26); color: #fff; }
+.version-chip[hidden] { display: none; }
+.update-bar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 9px 22px; background: color-mix(in srgb, var(--ok) 14%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--ok) 40%, var(--border));
+}
+.update-bar[hidden] { display: none; }
+.upd-icon { display: grid; place-items: center; color: var(--ok); }
+.upd-icon svg { width: 20px; height: 20px; }
+.progress { flex: 1; max-width: 320px; height: 8px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
+.progress span { display: block; height: 100%; background: var(--ok); transition: width 0.2s; }
+
 /* ---------- controls */
 .btn {
   font: inherit; font-weight: 500;

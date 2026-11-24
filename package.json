@@ -1,7 +1,7 @@
 {
   "name": "activity-merger",
   "productName": "Activity Merger",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Combine FIT, TCX and GPX recordings of the same workout and choose which data comes from which file.",
   "type": "module",
   "main": "src/main/main.cjs",
@@ -15,14 +15,16 @@
     "samples": "node test/make-samples.mjs",
     "dist:win": "npm run build && electron-builder --win nsis --x64"
   },
-  "dependencies": {},
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  },
   "devDependencies": {
     "@garmin/fitsdk": "^21.222.0",
-    "fast-xml-parser": "^5.12.1",
-    "uplot": "^1.6.32",
     "electron": "^45.4.1",
     "electron-builder": "^26.18.0",
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "fast-xml-parser": "^5.12.1",
+    "uplot": "^1.6.32"
   },
   "build": {
     "appId": "app.activitymerger.desktop",
@@ -48,10 +50,21 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "Activity Merger",
-      "artifactName": "${productName}-${version}-setup.${ext}"
+      "artifactName": "ActivityMerger-${version}-setup.${ext}"
     },
     "portable": {
-      "artifactName": "${productName}-${version}-portable.${ext}"
-    }
+      "artifactName": "ActivityMerger-${version}-portable.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "NoahClaes",
+        "repo": "Activity-merger"
+      }
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NoahClaes/Activity-merger.git"
   }
 }

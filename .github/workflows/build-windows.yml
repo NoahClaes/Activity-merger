@@ -41,6 +41,8 @@ jobs:
           name: activity-merger-windows
           path: |
             release/*.exe
+            release/latest.yml
+            release/*.blockmap
           if-no-files-found: error
 
       - name: Publish release
@@ -49,4 +51,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.release || github.ref_name }}
-        run: gh release create "$TAG" release/*.exe --target "$GITHUB_SHA" --title "Activity Merger $TAG" --generate-notes
+        run: gh release create "$TAG" release/*.exe release/latest.yml release/*.blockmap --target "$GITHUB_SHA" --title "Activity Merger $TAG" --generate-notes

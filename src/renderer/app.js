@@ -661,6 +661,64 @@ window.addEventListener('resize', () => {
 });
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => state.tab === 'charts' && renderCharts());
 
+// ---------------------------------------------------------------- updates
+const upd = { manual: false, version: null };
+function updateBar(content) {
+  const bar = $('update-bar');
+  if (!content) return (bar.hidden = true);
+  bar.replaceChildren(...content);
+  bar.hidden = false;
+}
+function onUpdateStatus(u) {
+  if (u.state === 'available') {
+    upd.manual = false;
+    updateBar([
+      h('span', { class: 'upd-icon', html: ICONS.upload }),
+      h('span', {}, h('strong', {}, `Version ${u.version} is available.`), ` You have ${upd.version}.`),
+      h('button', { class: 'btn small primary', onclick: () => { onUpdateStatus({ state: 'downloading', percent: 0 }); window.api.downloadUpdate().catch(() => {}); } }, 'Update now'),
+      h('button', { class: 'btn small ghost', onclick: () => updateBar(null) }, 'Later'),
+    ]);
+  } else if (u.state === 'downloading') {
+    updateBar([
+      h('span', {}, h('strong', {}, 'Downloading update…'), ` ${u.percent ?? 0}%`),
+      h('span', { class: 'progress' }, h('span', { style: `width:${u.percent ?? 0}%` })),
+    ]);
+  } else if (u.state === 'ready') {
+    updateBar([
+      h('span', {}, h('strong', {}, `Version ${u.version} is ready.`), ' The app restarts to finish updating.'),
+      h('button', { class: 'btn small primary', onclick: () => window.api.installUpdate() }, 'Restart & install'),
+      h('button', { class: 'btn small ghost', onclick: () => updateBar(null) }, 'Later (installs when you close the app)'),
+    ]);
+  } else if (u.state === 'none') {
+    if (upd.manual) toast(`You have the latest version (${upd.version}).`, 'ok');
+    upd.manual = false;
+  } else if (u.state === 'error') {
+    if (upd.manual || !$('update-bar').hidden) toast(`Update failed: ${u.message}`, 'error', 8000);
+    updateBar(null);
+    upd.manual = false;
+  }
+}
+async function initUpdates() {
+  if (!window.api?.appInfo) return;
+  const info = await window.api.appInfo();
+  upd.version = info.version;
+  const btn = $('version-btn');
+  btn.textContent = `v${info.version}`;
+  btn.hidden = false;
+  window.api.onUpdateStatus(onUpdateStatus);
+  btn.addEventListener('click', async () => {
+    upd.manual = true;
+    const r = await window.api.checkForUpdates();
+    if (r.state === 'unsupported') {
+      upd.manual = false;
+      toast('Automatic updates only work in the installed app (not the portable version).', 'warn', 6000);
+    } else if (r.state === 'error') onUpdateStatus(r);
+  });
+  if (info.canUpdate) window.api.checkForUpdates();
+}
+initUpdates();
+
 window.__state = state;
+window.__onUpdateStatus = onUpdateStatus;
 syncThemeButtons();
 render();
