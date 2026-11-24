@@ -4,11 +4,12 @@ import { STREAMS, streamByKey, hasStream } from '../core/streams.js';
 import { mergeActivities, defaultSources, rangePreset, autoAlign, computeStats, sampleAt, fileSpan, sourceAt } from '../core/merge.js';
 import { toFit, toTcx, toGpx, SPORTS, sportFromActivity } from '../core/export.js';
 
-const COLORS = ['#2f6fed', '#e8590c', '#2b9348', '#9c36b5', '#d6336c', '#0c8599'];
+const FILE_COLORS = ['#3b82f6', '#f97316', '#10b981', '#a855f7', '#ec4899', '#06b6d4'];
 const $ = (id) => document.getElementById(id);
 
 const state = {
-  files: [], // { id, color, activity, offset, path }
+  tab: 'files',
+  files: [], // { id, color, activity, offset, path, stats }
   sources: {},
   overrides: [], // { stream, fileId|null, from, to }
   rangeMode: 'auto', // 'auto' | 'all' | 'overlap' | fileId | 'custom'
@@ -16,8 +17,8 @@ const state = {
   maxGap: 10,
   lapSource: 'auto',
   sport: null,
-  selection: null, // { from, to }
-  view: null, // zoomed x range { min, max }
+  selection: null,
+  view: null,
   merged: null,
   nextId: 1,
 };
@@ -30,6 +31,7 @@ function h(tag, attrs = {}, ...children) {
     if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
     else if (k === 'class') el.className = v;
     else if (k === 'style') el.style.cssText = v;
+    else if (k === 'html') el.innerHTML = v;
     else if (k in el && typeof v !== 'string') el[k] = v;
     else el.setAttribute(k, v === true ? '' : v);
   }
@@ -45,7 +47,10 @@ function fmtDuration(sec) {
   return sec < 0 ? `-${str}` : str;
 }
 const fmtClock = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-const fmtDate = (t) => new Date(t * 1000).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+const fmtDateTime = (t) =>
+  new Date(t * 1000).toLocaleString([], { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const streamColor = (key) => `var(--s-${key})`;
 
 let toastTimer;
 function toast(msg, kind = 'info', ms = 4000) {
@@ -58,7 +63,30 @@ function toast(msg, kind = 'info', ms = 4000) {
 }
 
 const fileById = (id) => state.files.find((f) => f.id === id);
+const fileIndex = (id) => state.files.findIndex((f) => f.id === id);
 const fileName = (id) => (id == null ? 'None' : fileById(id)?.activity.name ?? '?');
+
+const ICONS = {
+  remove: '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  watch: '<svg viewBox="0 0 24 24" width="30" height="30"><rect x="6" y="6" width="12" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 6l.6-3h4.8L15 6M9 18l.6 3h4.8L15 18M12 9.5V12l1.6 1.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  screen: '<svg viewBox="0 0 24 24" width="30" height="30"><rect x="3" y="4" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 20h8M12 16v4M7 12l3-3 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  bike: '<svg viewBox="0 0 24 24" width="30" height="30"><rect x="6" y="3" width="12" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="8.5" y="6" width="7" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9 16h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  phone: '<svg viewBox="0 0 24 24" width="30" height="30"><rect x="7" y="2.5" width="10" height="19" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 18.5h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  file: '<svg viewBox="0 0 24 24" width="30" height="30"><path d="M6 3h8l4 4v14H6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M14 3v4h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
+  upload: '<svg viewBox="0 0 24 24" width="44" height="44"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
+const icon = (name, cls = 'icon') => h('span', { class: cls, html: ICONS[name], 'aria-hidden': 'true' });
+
+const VIRTUAL_APPS = ['zwift', 'tacx', 'rouvy', 'mywhoosh', 'trainerroad', 'bkool', 'fulgaz', 'kinomap', 'wahoo_fitness', 'peloton', 'onelap'];
+function deviceIcon(a) {
+  const m = (a.manufacturer ?? a.device ?? '').toLowerCase();
+  const d = (a.device ?? '').toLowerCase();
+  if (VIRTUAL_APPS.some((v) => m.includes(v) || d.includes(v)) || a.subSport === 'virtualActivity') return 'screen';
+  if (/edge|elemnt|bolt|roam|karoo|bryton|computer/.test(d)) return 'bike';
+  if (/connect|strava|app|phone|android|iphone/.test(d)) return 'phone';
+  if (/garmin|fenix|forerunner|coros|polar|suunto|watch|venu|epix|vivo/.test(d + m)) return 'watch';
+  return 'file';
+}
 
 // The file that "leads" the merge: most streams chosen from it.
 function primaryFile() {
@@ -77,19 +105,37 @@ function currentRange() {
   return rangePreset(state.files, state.rangeMode) ?? rangePreset(state.files, primaryFile()?.id);
 }
 
-function lapSourceId() {
-  return state.lapSource === 'auto' ? primaryFile()?.id : state.lapSource;
-}
+const lapSourceId = () => (state.lapSource === 'auto' ? primaryFile()?.id : state.lapSource);
 
 function mergeConfig() {
-  return {
-    files: state.files,
-    sources: state.sources,
-    overrides: state.overrides,
-    range: currentRange(),
-    maxGap: state.maxGap,
-    lapSource: lapSourceId(),
-  };
+  return { files: state.files, sources: state.sources, overrides: state.overrides, range: currentRange(), maxGap: state.maxGap, lapSource: lapSourceId() };
+}
+
+// ---------------------------------------------------------------- theme
+function getThemeChoice() {
+  try {
+    return localStorage.getItem('theme') || 'system';
+  } catch {
+    return 'system';
+  }
+}
+function setTheme(choice) {
+  try {
+    localStorage.setItem('theme', choice);
+  } catch {}
+  if (choice === 'system') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = choice;
+  syncThemeButtons();
+  if (state.tab === 'charts') renderCharts();
+}
+function syncThemeButtons() {
+  const choice = getThemeChoice();
+  for (const b of document.querySelectorAll('[data-theme-choice]')) {
+    const on = b.dataset.themeChoice === choice;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', String(on));
+    b.setAttribute('role', 'radio');
+  }
 }
 
 // ---------------------------------------------------------------- loading
@@ -99,8 +145,8 @@ async function addFiles(list) {
     try {
       const activity = parseActivity(name, data);
       const id = `f${state.nextId++}`;
-      const color = COLORS[(state.nextId - 2) % COLORS.length];
-      state.files.push({ id, color, activity, offset: 0, path });
+      const color = FILE_COLORS[(state.nextId - 2) % FILE_COLORS.length];
+      state.files.push({ id, color, activity, offset: 0, path, stats: computeStats(activity.records) });
       for (const w of activity.warnings) toast(`${name}: ${w}`, 'warn', 6000);
       added++;
     } catch (err) {
@@ -108,28 +154,20 @@ async function addFiles(list) {
     }
   }
   if (!added) return;
-  // Fill in sources for streams that have none yet (keeps the user's choices).
   const defaults = defaultSources(state.files);
   for (const s of STREAMS) {
     if (state.sources[s.key] == null || !fileById(state.sources[s.key])) state.sources[s.key] = defaults[s.key];
   }
   if (!state.sport) state.sport = sportFromActivity(primaryFile().activity);
-  checkOverlap();
-  render();
-}
-
-function checkOverlap() {
-  if (state.files.length < 2) return;
-  if (!rangePreset(state.files, 'overlap')) {
-    toast('Some of these files do not overlap in time. Check that they are recordings of the same workout, or shift one with its time offset.', 'warn', 8000);
+  if (state.files.length >= 2 && !rangePreset(state.files, 'overlap')) {
+    toast('Some of these files do not overlap in time. Check that they are recordings of the same workout, or shift one with its time shift.', 'warn', 8000);
   }
+  render();
 }
 
 async function readBrowserFiles(fileList) {
   const items = [];
-  for (const f of fileList) {
-    items.push({ name: f.name, data: new Uint8Array(await f.arrayBuffer()), path: window.api?.pathForFile(f) ?? null });
-  }
+  for (const f of fileList) items.push({ name: f.name, data: new Uint8Array(await f.arrayBuffer()), path: window.api?.pathForFile(f) ?? null });
   await addFiles(items);
 }
 
@@ -145,72 +183,11 @@ function removeFile(id) {
   for (const s of STREAMS) if (state.sources[s.key] === id) state.sources[s.key] = defaults[s.key];
   if (state.rangeMode === id) state.rangeMode = 'auto';
   if (state.lapSource === id) state.lapSource = 'auto';
-  if (!state.files.length) Object.assign(state, { sources: {}, sport: null, selection: null, view: null, rangeMode: 'auto', customRange: null });
+  if (!state.files.length) Object.assign(state, { sources: {}, sport: null, selection: null, view: null, rangeMode: 'auto', customRange: null, tab: 'files' });
   render();
 }
 
-// ---------------------------------------------------------------- sidebar
-function section(title, ...body) {
-  return h('section', { class: 'panel' }, h('h3', {}, title), ...body);
-}
-
-function renderFiles() {
-  const cards = state.files.map((f) => {
-    const a = f.activity;
-    const chips = STREAMS.filter((s) => hasStream(a, s.key)).map((s) => h('span', { class: 'chip' }, s.label));
-    const offsetInput = h('input', {
-      type: 'number',
-      step: '1',
-      value: String(f.offset),
-      class: 'offset-input',
-      'aria-label': `Time offset for ${a.name} in seconds`,
-      onchange: (e) => {
-        f.offset = Math.round(Number(e.target.value) || 0);
-        render();
-      },
-    });
-    const nudge = (d) => () => {
-      f.offset += d;
-      render();
-    };
-    const others = state.files.filter((x) => x.id !== f.id);
-    return h(
-      'div',
-      { class: 'file-card', style: `--file-color:${f.color}` },
-      h(
-        'div',
-        { class: 'file-head' },
-        h('span', { class: 'dot' }),
-        h('div', { class: 'file-title' }, h('strong', { title: f.path ?? a.name }, a.name), h('small', {}, [a.format.toUpperCase(), a.device].filter(Boolean).join(' · '))),
-        h('button', { class: 'icon-btn', title: 'Remove file', 'aria-label': `Remove ${a.name}`, onclick: () => removeFile(f.id) }, '×')
-      ),
-      h('div', { class: 'file-meta' }, `${fmtDate(a.start)} · ${fmtClock(a.start + f.offset)} – ${fmtClock(a.end + f.offset)} · ${fmtDuration(a.end - a.start)}`),
-      h('div', { class: 'chips' }, chips),
-      state.files.length > 1 &&
-        h(
-          'div',
-          { class: 'offset-row' },
-          h('label', {}, 'Time shift'),
-          h('button', { class: 'btn small', onclick: nudge(-10), title: '−10 s' }, '−10'),
-          h('button', { class: 'btn small', onclick: nudge(-1), title: '−1 s' }, '−1'),
-          offsetInput,
-          h('span', { class: 'unit' }, 's'),
-          h('button', { class: 'btn small', onclick: nudge(1), title: '+1 s' }, '+1'),
-          h('button', { class: 'btn small', onclick: nudge(10), title: '+10 s' }, '+10'),
-          others.length > 0 &&
-            h('button', { class: 'btn small', title: 'Line this file up with another one automatically', onclick: () => runAutoAlign(f) }, 'Auto-align')
-        )
-    );
-  });
-  return section(
-    'Files',
-    cards.length ? cards : h('p', { class: 'muted' }, 'No files yet.'),
-    h('button', { class: 'btn ghost full', onclick: openDialog }, '+ Add files')
-  );
-}
-
 function runAutoAlign(f) {
-  // Align against the primary file, or the first other file.
   const ref = primaryFile()?.id !== f.id ? primaryFile() : state.files.find((x) => x.id !== f.id);
   const res = autoAlign(ref, f);
   if (res.error) return toast(res.error, 'warn', 7000);
@@ -221,50 +198,131 @@ function runAutoAlign(f) {
   render();
 }
 
-function fileOptions(key, selected, { includeNone = true } = {}) {
-  const opts = state.files
-    .filter((f) => !key || hasStream(f.activity, key))
-    .map((f) => h('option', { value: f.id, selected: f.id === selected }, f.activity.name));
-  if (includeNone) opts.push(h('option', { value: '', selected: selected == null }, 'None'));
-  return opts;
+// ---------------------------------------------------------------- files view
+function streamHint(f, key) {
+  const s = f.stats;
+  const a = f.activity;
+  const r = Math.round;
+  switch (key) {
+    case 'hr': return s.hr && `avg ${r(s.hr.avg)} · max ${s.hr.max} bpm`;
+    case 'power': return s.power && `avg ${r(s.power.avg)} · max ${s.power.max} W`;
+    case 'cadence': return s.cadence && `avg ${r(s.cadence.avg)} rpm`;
+    case 'speed': return s.speed && `avg ${(s.speed.avg * 3.6).toFixed(1)} km/h`;
+    case 'distance': return s.distance != null && `${(s.distance / 1000).toFixed(2)} km`;
+    case 'position': return `${a.streamCounts.position} points`;
+    case 'alt': return s.ascent != null && `+${r(s.ascent)} m`;
+    case 'temp': return s.temp && `avg ${s.temp.avg.toFixed(1)} °C`;
+  }
+  return null;
 }
 
-function renderSources() {
-  const rows = STREAMS.filter((s) => state.files.some((f) => hasStream(f.activity, s.key)) || s.key === 'distance').map((s) => {
-    const sel = h(
-      'select',
-      {
-        'aria-label': `Source for ${s.label}`,
+function streamList(f) {
+  const a = f.activity;
+  const items = STREAMS.filter((s) => hasStream(a, s.key)).map((s) => {
+    const checked = state.sources[s.key] === f.id;
+    const id = `cb-${f.id}-${s.key}`;
+    return h(
+      'label',
+      { class: `stream${checked ? ' on' : ''}`, for: id, style: `--c:${streamColor(s.key)}` },
+      h('input', {
+        type: 'checkbox',
+        id,
+        checked,
         onchange: (e) => {
-          state.sources[s.key] = e.target.value || null;
+          state.sources[s.key] = e.target.checked ? f.id : null;
           render();
         },
-      },
-      fileOptions(s.key === 'distance' ? null : s.key, state.sources[s.key])
+      }),
+      h('span', { class: 'stream-name' }, s.label),
+      h('small', {}, streamHint(f, s.key) || '')
     );
-    const color = fileById(state.sources[s.key])?.color;
-    return h('div', { class: 'source-row' }, h('span', { class: 'dot', style: color ? `background:${color}` : 'background:transparent;border:1px dashed var(--muted)' }), h('label', {}, s.label), sel);
   });
-
-  const overrides = state.overrides.map((o, i) =>
-    h(
-      'div',
-      { class: 'override', style: `--file-color:${fileById(o.fileId)?.color ?? 'var(--muted)'}` },
-      h('span', {}, h('strong', {}, streamByKey(o.stream).label), ` ${fmtClock(o.from)}–${fmtClock(o.to)} → ${fileName(o.fileId)}`),
-      h('button', { class: 'icon-btn', 'aria-label': 'Remove exception', onclick: () => { state.overrides.splice(i, 1); render(); } }, '×')
-    )
-  );
-
-  return section(
-    'Data sources',
-    h('p', { class: 'hint' }, 'Choose which file each type of data comes from.'),
-    rows,
-    h('h4', {}, 'Exceptions for a time range'),
-    overrides.length ? overrides : h('p', { class: 'hint' }, 'Drag across a chart to select a time range, then pick a different source for it.')
+  const laps = a.laps.length || 1;
+  return h(
+    'div',
+    { class: 'stream-list' },
+    items.length ? items : h('p', { class: 'muted' }, 'No usable data in this file.'),
+    h('div', { class: 'stream-foot' }, h('span', { class: 'pill' }, `${laps} lap${laps === 1 ? '' : 's'}`))
   );
 }
 
-function renderRange() {
+function fileRow(f, i) {
+  const a = f.activity;
+  const nudge = (d) => () => { f.offset += d; render(); };
+  const sport = SPORTS.find((s) => s.id === sportFromActivity(a));
+  const shift =
+    state.files.length > 1 &&
+    h(
+      'div',
+      { class: 'shift' },
+      h('span', { class: 'shift-label' }, 'Time shift'),
+      h('div', { class: 'stepper' },
+        h('button', { onclick: nudge(-10), title: '−10 seconds' }, '−10'),
+        h('button', { onclick: nudge(-1), title: '−1 second' }, '−1'),
+        h('input', {
+          type: 'number', step: '1', value: String(f.offset), 'aria-label': `Time shift for ${a.name} in seconds`,
+          onchange: (e) => { f.offset = Math.round(Number(e.target.value) || 0); render(); },
+        }),
+        h('button', { onclick: nudge(1), title: '+1 second' }, '+1'),
+        h('button', { onclick: nudge(10), title: '+10 seconds' }, '+10')),
+      h('button', { class: 'btn small soft', title: 'Line this file up with another one automatically', onclick: () => runAutoAlign(f) }, 'Auto-align')
+    );
+
+  return h(
+    'tr',
+    { style: `--file:${f.color}` },
+    h('td', { class: 'num' }, pad(i + 1)),
+    h(
+      'td',
+      { class: 'file-cell' },
+      h('div', { class: 'file-name' }, h('strong', { title: f.path ?? a.name }, a.name), h('span', {}, `Duration ${fmtDuration(a.end - a.start)}`)),
+      h('dl', { class: 'times' }, h('dt', {}, 'Start'), h('dd', {}, fmtDateTime(a.start + f.offset)), h('dt', {}, 'End'), h('dd', {}, fmtDateTime(a.end + f.offset))),
+      shift
+    ),
+    h('td', { class: 'device-cell' }, icon(deviceIcon(a), 'device-icon'), h('span', {}, a.device ?? 'Unknown device')),
+    h('td', { class: 'type-cell' }, h('span', { class: `format-badge f-${a.format}` }, a.format.toUpperCase()), h('span', { class: 'sport' }, sport?.label ?? 'Activity')),
+    h('td', { class: 'streams-cell' }, streamList(f)),
+    h('td', { class: 'actions-cell' }, h('button', { class: 'icon-btn', title: 'Remove file', 'aria-label': `Remove ${a.name}`, onclick: () => removeFile(f.id), html: ICONS.remove }))
+  );
+}
+
+function filesTable() {
+  return h(
+    'div',
+    { class: 'card table-card' },
+    h(
+      'table',
+      { class: 'files' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'File #'), h('th', {}, 'File'), h('th', {}, 'Device'), h('th', {}, 'Type · Sport'), h('th', {}, 'Data streams', h('small', {}, ' tick the data to use from each file')), h('th', {}))),
+      h('tbody', {}, state.files.map(fileRow))
+    ),
+    h('button', { class: 'add-row', onclick: openDialog }, '+ Add another file')
+  );
+}
+
+function card(title, accent, ...body) {
+  return h('section', { class: `card ${title === 'Result' ? 'result' : ''}`, style: `--accent-c:${accent}` }, h('h3', {}, title), ...body);
+}
+
+function exceptionsCard() {
+  const list = state.overrides.map((o, i) =>
+    h(
+      'div',
+      { class: 'exception', style: `--c:${streamColor(o.stream)}` },
+      h('span', { class: 'exc-stream' }, streamByKey(o.stream).label),
+      h('span', {}, `${fmtClock(o.from)} – ${fmtClock(o.to)}`),
+      h('span', { class: 'exc-src' }, '→ ', o.fileId ? h('span', { class: 'swatch', style: `background:${fileById(o.fileId)?.color}` }) : null, fileName(o.fileId)),
+      h('button', { class: 'icon-btn', 'aria-label': 'Remove exception', onclick: () => { state.overrides.splice(i, 1); render(); }, html: ICONS.remove })
+    )
+  );
+  return card(
+    'Exceptions for a time range',
+    'var(--s-power)',
+    list.length ? list : h('p', { class: 'hint' }, 'Use a different file (or none) for part of the workout: open ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); setTab('charts'); } }, 'Charts'), ' and drag across a chart to select the time range.')
+  );
+}
+
+function rangeCard() {
   const range = currentRange();
   const opts = [
     ['auto', `Main file (${primaryFile()?.activity.name ?? '–'})`],
@@ -273,138 +331,129 @@ function renderRange() {
     ...state.files.map((f) => [f.id, f.activity.name]),
   ];
   if (state.rangeMode === 'custom') opts.push(['custom', 'Custom (trimmed)']);
-  const sel = h(
-    'select',
-    { 'aria-label': 'Time range', onchange: (e) => { state.rangeMode = e.target.value; render(); } },
-    opts.map(([v, l]) => h('option', { value: v, selected: v === state.rangeMode }, l))
-  );
   const timeInput = (which) =>
     h('input', {
-      type: 'time',
-      step: '1',
+      type: 'time', step: '1', 'aria-label': which === 'start' ? 'Start time' : 'End time',
       value: range ? new Date(range[which] * 1000).toTimeString().slice(0, 8) : '',
-      'aria-label': which === 'start' ? 'Start time' : 'End time',
       onchange: (e) => {
         const [hh, mm, ss] = e.target.value.split(':').map(Number);
         const d = new Date(range[which] * 1000);
         d.setHours(hh, mm, ss || 0, 0);
-        state.customRange = { ...range, [which]: d.getTime() / 1000 };
-        if (state.customRange.end <= state.customRange.start) return toast('The end must be after the start.', 'warn');
+        const next = { ...range, [which]: d.getTime() / 1000 };
+        if (next.end <= next.start) return toast('The end must be after the start.', 'warn');
+        state.customRange = next;
         state.rangeMode = 'custom';
         render();
       },
     });
-  return section(
+  return card(
     'Time range',
-    h('div', { class: 'field' }, h('label', {}, 'Keep'), sel),
-    h('div', { class: 'field two' }, h('label', {}, 'From'), timeInput('start'), h('label', {}, 'to'), timeInput('end')),
+    'var(--s-speed)',
+    h('div', { class: 'field' }, h('label', {}, 'Keep'),
+      h('select', { 'aria-label': 'Time range', onchange: (e) => { state.rangeMode = e.target.value; render(); } }, opts.map(([v, l]) => h('option', { value: v, selected: v === state.rangeMode }, l)))),
+    h('div', { class: 'field' }, h('label', {}, 'Start'), timeInput('start')),
+    h('div', { class: 'field' }, h('label', {}, 'End'), timeInput('end')),
     range && h('p', { class: 'hint' }, `Duration ${fmtDuration(range.end - range.start + 1)}`)
   );
 }
 
-function renderOptions() {
-  const gap = h('input', {
-    type: 'number',
-    min: '0',
-    max: '300',
-    value: String(state.maxGap),
-    class: 'narrow',
-    'aria-label': 'Fill gaps up to seconds',
-    onchange: (e) => { state.maxGap = Math.max(0, Math.min(300, Number(e.target.value) || 0)); render(); },
-  });
-  const laps = h(
-    'select',
-    { 'aria-label': 'Laps', onchange: (e) => { state.lapSource = e.target.value; render(); } },
-    h('option', { value: 'auto', selected: state.lapSource === 'auto' }, 'From main file'),
-    state.files.map((f) => h('option', { value: f.id, selected: state.lapSource === f.id }, `${f.activity.name} (${f.activity.laps.length || 1})`)),
-    h('option', { value: 'single', selected: state.lapSource === 'single' }, 'One lap for the whole activity')
-  );
-  const sport = h(
-    'select',
-    { 'aria-label': 'Activity type', onchange: (e) => { state.sport = e.target.value; render(); } },
-    SPORTS.map((s) => h('option', { value: s.id, selected: s.id === state.sport }, s.label))
-  );
-  return section(
+function optionsCard() {
+  return card(
     'Options',
-    h('div', { class: 'field' }, h('label', {}, 'Fill gaps up to'), h('span', { class: 'inline' }, gap, ' seconds')),
-    h('p', { class: 'hint' }, 'Watches often record every few seconds. Short gaps are filled by drawing a line between the points on either side.'),
-    h('div', { class: 'field' }, h('label', {}, 'Laps'), laps),
-    h('div', { class: 'field' }, h('label', {}, 'Activity type'), sport)
+    'var(--s-alt)',
+    h('div', { class: 'field' }, h('label', {}, 'Fill gaps up to'),
+      h('div', { class: 'inline' },
+        h('input', { type: 'number', min: '0', max: '300', value: String(state.maxGap), class: 'narrow', 'aria-label': 'Fill gaps up to seconds',
+          onchange: (e) => { state.maxGap = Math.max(0, Math.min(300, Number(e.target.value) || 0)); render(); } }),
+        h('span', { class: 'muted' }, 'seconds'))),
+    h('p', { class: 'hint' }, 'Watches often record every few seconds; short gaps are filled smoothly.'),
+    h('div', { class: 'field' }, h('label', {}, 'Laps'),
+      h('select', { 'aria-label': 'Laps', onchange: (e) => { state.lapSource = e.target.value; render(); } },
+        h('option', { value: 'auto', selected: state.lapSource === 'auto' }, 'From main file'),
+        state.files.map((f) => h('option', { value: f.id, selected: state.lapSource === f.id }, `${f.activity.name} (${f.activity.laps.length || 1})`)),
+        h('option', { value: 'single', selected: state.lapSource === 'single' }, 'One lap for everything'))),
+    h('div', { class: 'field' }, h('label', {}, 'Activity type'),
+      h('select', { 'aria-label': 'Activity type', onchange: (e) => { state.sport = e.target.value; render(); } },
+        SPORTS.map((s) => h('option', { value: s.id, selected: s.id === state.sport }, s.label))))
   );
 }
 
-function renderSummary() {
+function resultCard() {
   const m = state.merged;
-  if (!m || !m.records.length) return section('Result', h('p', { class: 'muted' }, 'Nothing to export in this time range.'));
+  if (!m || !m.records.length) return card('Result', 'var(--s-hr)', h('p', { class: 'muted' }, 'Nothing to export in this time range.'));
   const s = computeStats(m.records);
-  const item = (label, value) => value != null && h('div', { class: 'stat' }, h('span', {}, label), h('strong', {}, value));
-  const r0 = (v) => Math.round(v);
-  return section(
+  const r0 = Math.round;
+  const tile = (key, label, value, sub) =>
+    value != null && h('div', { class: 'tile', style: `--c:${key ? streamColor(key) : 'var(--accent)'}` }, h('span', {}, label), h('strong', {}, value), sub && h('small', {}, sub));
+  return card(
     'Result',
+    'var(--s-hr)',
     h(
       'div',
-      { class: 'stats' },
-      item('Duration', fmtDuration(s.elapsed)),
-      item('Distance', s.distance != null ? `${(s.distance / 1000).toFixed(2)} km` : null),
-      item('Avg / max HR', s.hr && `${r0(s.hr.avg)} / ${s.hr.max} bpm`),
-      item('Avg / max power', s.power && `${r0(s.power.avg)} / ${s.power.max} W`),
-      item('Normalized power', s.np && `${r0(s.np)} W`),
-      item('Avg cadence', s.cadence && `${r0(s.cadence.avg)} rpm`),
-      item('Avg speed', s.speed && `${(s.speed.avg * 3.6).toFixed(1)} km/h`),
-      item('Elevation gain', s.ascent != null ? `${r0(s.ascent)} m` : null),
-      item('Energy', s.work != null ? `${r0(s.work / 1000)} kJ` : null),
-      item('Laps', String(m.laps.length))
+      { class: 'tiles' },
+      tile(null, 'Duration', fmtDuration(s.elapsed), `${m.laps.length} lap${m.laps.length === 1 ? '' : 's'}`),
+      tile('distance', 'Distance', s.distance != null ? `${(s.distance / 1000).toFixed(2)} km` : null),
+      tile('hr', 'Heart rate', s.hr && `${r0(s.hr.avg)} bpm`, s.hr && `max ${s.hr.max}`),
+      tile('power', 'Power', s.power && `${r0(s.power.avg)} W`, s.power && `NP ${r0(s.np ?? s.power.avg)} · max ${s.power.max}`),
+      tile('cadence', 'Cadence', s.cadence && `${r0(s.cadence.avg)} rpm`),
+      tile('speed', 'Speed', s.speed && `${(s.speed.avg * 3.6).toFixed(1)} km/h`, s.speed && `max ${(s.speed.max * 3.6).toFixed(1)}`),
+      tile('alt', 'Elevation gain', s.ascent != null ? `${r0(s.ascent)} m` : null),
+      tile('temp', 'Energy', s.work != null ? `${r0(s.work / 1000)} kJ` : null)
     ),
-    coverageWarnings(s, m)
+    coverageWarnings(m)
   );
 }
 
-function coverageWarnings(s, m) {
+function coverageWarnings(m) {
   const notes = [];
   const n = m.records.length;
   for (const key of ['hr', 'power', 'cadence']) {
     if (!state.sources[key] && !state.overrides.some((o) => o.stream === key && o.fileId)) continue;
     const have = m.records.filter((r) => r[key] != null).length;
-    if (have < n * 0.95) {
-      notes.push(`${streamByKey(key).label} is missing for ${fmtDuration(n - have)} of the activity.`);
-    }
+    if (have < n * 0.95) notes.push(`${streamByKey(key).label} is missing for ${fmtDuration(n - have)} of the activity.`);
   }
   return notes.length ? h('div', { class: 'notes' }, notes.map((t) => h('p', {}, t))) : null;
 }
 
-function renderSidebar() {
-  const sb = $('sidebar');
-  sb.replaceChildren();
-  if (!state.files.length) {
-    sb.append(section('Files', h('p', { class: 'muted' }, 'No files yet.'), h('button', { class: 'btn ghost full', onclick: openDialog }, '+ Add files')));
-    return;
-  }
-  sb.append(renderFiles(), renderSources(), renderRange(), renderOptions(), renderSummary());
+function emptyState() {
+  return h(
+    'div',
+    { class: 'empty' },
+    h('div', { class: 'drop-target' },
+      icon('upload', 'upload-icon'),
+      h('h2', {}, 'Drop your activity files here'),
+      h('p', {}, 'FIT, TCX or GPX from any app or device. Add two or more recordings of the same workout, for example an indoor ride and your watch.'),
+      h('button', { class: 'btn primary', onclick: openDialog }, 'Choose files…'),
+      h('div', { class: 'legend' }, STREAMS.map((s) => h('span', { style: `--c:${streamColor(s.key)}` }, s.label))))
+  );
 }
 
-// ---------------------------------------------------------------- selection
+function renderFilesView() {
+  const v = $('view-files');
+  v.replaceChildren();
+  if (!state.files.length) return v.append(emptyState());
+  v.append(filesTable(), h('div', { class: 'cards' }, resultCard(), rangeCard(), optionsCard(), exceptionsCard()));
+}
+
+// ---------------------------------------------------------------- charts view
 function renderSelectionBar() {
   const bar = $('selection-bar');
   const sel = state.selection;
-  if (!sel || !state.files.length) {
-    bar.hidden = true;
-    return;
-  }
+  if (!sel || !state.files.length) return (bar.hidden = true);
   bar.hidden = false;
   const chartable = STREAMS.filter((s) => state.files.some((f) => hasStream(f.activity, s.key)));
   const streamSel = h('select', { 'aria-label': 'Data type for this range' }, chartable.map((s) => h('option', { value: s.key }, s.label)));
-  const srcSel = h('select', { 'aria-label': 'Source for this range' }, fileOptions(null, state.files[0]?.id));
+  const srcSel = h('select', { 'aria-label': 'Source for this range' },
+    state.files.map((f) => h('option', { value: f.id }, f.activity.name)), h('option', { value: '' }, 'None (leave empty)'));
   bar.replaceChildren(
-    h('span', { class: 'sel-label' }, `Selected ${fmtClock(sel.from)} – ${fmtClock(sel.to)} (${fmtDuration(sel.to - sel.from)})`),
+    h('span', { class: 'sel-label' }, `${fmtClock(sel.from)} – ${fmtClock(sel.to)}`, h('small', {}, ` (${fmtDuration(sel.to - sel.from)})`)),
     h('span', { class: 'sel-group' }, 'Use', streamSel, 'from', srcSel,
-      h('button', {
-        class: 'btn small primary',
-        onclick: () => {
-          state.overrides.push({ stream: streamSel.value, fileId: srcSel.value || null, from: sel.from, to: sel.to });
-          state.selection = null;
-          render();
-        },
-      }, 'Apply')),
+      h('button', { class: 'btn small primary', onclick: () => {
+        state.overrides.push({ stream: streamSel.value, fileId: srcSel.value || null, from: sel.from, to: sel.to });
+        state.selection = null;
+        toast('Exception added. You can see and remove it on the Files & data tab.', 'ok');
+        render();
+      } }, 'Apply')),
     h('span', { class: 'sel-group' },
       h('button', { class: 'btn small', onclick: () => { state.customRange = { start: sel.from, end: sel.to }; state.rangeMode = 'custom'; state.selection = null; render(); } }, 'Trim to selection'),
       h('button', { class: 'btn small', onclick: () => { state.view = { min: sel.from, max: sel.to }; state.selection = null; render(); } }, 'Zoom in'),
@@ -412,16 +461,12 @@ function renderSelectionBar() {
   );
 }
 
-// ---------------------------------------------------------------- charts
 let charts = [];
-const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-
 function chartWindow() {
   const spans = state.files.map(fileSpan);
   const range = currentRange();
   let min = Math.min(range.start, ...spans.map((s) => s.start));
   let max = Math.max(range.end, ...spans.map((s) => s.end));
-  // Don't plot days of empty time when files are far apart.
   if (max - min > 12 * 3600) ({ start: min, end: max } = range);
   return { min: Math.floor(min), max: Math.ceil(max) };
 }
@@ -431,101 +476,105 @@ function renderCharts() {
   charts = [];
   const host = $('charts');
   host.replaceChildren();
-  $('empty').hidden = state.files.length > 0;
-  if (!state.files.length) return;
+  if (state.tab !== 'charts') return;
+  if (!state.files.length) {
+    host.append(emptyState());
+    return;
+  }
+  const range = currentRange();
+  if (!range) return;
 
   const win = chartWindow();
   const xs = [];
   for (let t = win.min; t <= win.max; t++) xs.push(t);
-  const range = currentRange();
   const mergedByT = new Map(state.merged.records.map((r) => [r.t, r]));
-  const width = Math.max(400, host.clientWidth - 8);
-  const cfg = mergeConfig();
+  const width = Math.max(400, host.clientWidth - 2);
   const grid = css('--grid');
   const axisColor = css('--muted');
   const shade = css('--shade');
-  const resultColor = css('--text');
+
+  host.append(
+    h('div', { class: 'charts-head' },
+      h('p', { class: 'hint' }, 'Thin lines are your files, the thick line is the result. Grey areas are outside the time range. Drag across a chart to select a range.'),
+      state.view && h('span', { class: 'zoom-info' }, `Zoomed to ${fmtClock(state.view.min)} – ${fmtClock(state.view.max)}`, h('button', { class: 'btn small', onclick: () => { state.view = null; render(); } }, 'Show all')))
+  );
 
   const streams = STREAMS.filter((s) => s.chart && state.files.some((f) => hasStream(f.activity, s.key)));
   for (const s of streams) {
     const disp = s.display ?? ((v) => v);
+    const color = css(`--s-${s.key}`);
     const files = state.files.filter((f) => hasStream(f.activity, s.key));
     const data = [xs];
     const series = [{}];
     for (const f of files) {
       data.push(xs.map((t) => { const v = sampleAt(f, s.key, t, state.maxGap); return v == null ? null : disp(v); }));
-      series.push({ label: f.activity.name, stroke: f.color + 'aa', width: 1, spanGaps: false, points: { show: false } });
+      series.push({ label: f.activity.name, stroke: f.color + '99', width: 1, points: { show: false } });
     }
     data.push(xs.map((t) => { const r = mergedByT.get(t); return r?.[s.key] == null ? null : disp(r[s.key]); }));
-    series.push({ label: 'Result', stroke: resultColor, width: 1.6, points: { show: false } });
+    series.push({ label: 'Result', stroke: color, width: 2, fill: color + '1f', points: { show: false } });
 
-    const wrap = h('div', { class: 'chart' }, h('div', { class: 'chart-title' }, `${s.label}`, h('small', {}, s.unit)));
+    const src = sourceAt(mergeConfig(), s.key, range.start);
+    const wrap = h('div', { class: 'chart', style: `--c:${color}` },
+      h('div', { class: 'chart-title' }, h('span', { class: 'chart-dot' }), s.label, h('small', {}, s.unit),
+        h('span', { class: 'chart-src' }, 'from ', h('span', { class: 'swatch', style: `background:${fileById(src)?.color ?? 'transparent'}` }), fileName(src))));
     host.append(wrap);
 
-    const opts = {
-      width,
-      height: 170,
-      series,
-      scales: { x: { time: true, min: state.view?.min ?? win.min, max: state.view?.max ?? win.max } },
-      axes: [
-        { stroke: axisColor, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid } },
-        { stroke: axisColor, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid }, size: 48 },
-      ],
-      legend: { show: true, live: true },
-      cursor: { sync: { key: 'm', setSeries: false }, drag: { x: true, y: false, setScale: false } },
-      select: { show: true },
-      hooks: {
-        drawClear: [
-          (u) => {
-            // Grey out time outside the export range, and tint exception ranges.
-            const { ctx } = u;
-            const top = u.bbox.top;
-            const hgt = u.bbox.height;
-            const X = (t) => u.valToPos(t, 'x', true);
-            ctx.save();
-            ctx.fillStyle = shade;
-            const l = u.bbox.left;
-            const rgt = u.bbox.left + u.bbox.width;
-            const a = Math.max(l, Math.min(rgt, X(range.start)));
-            const b = Math.max(l, Math.min(rgt, X(range.end)));
-            if (a > l) ctx.fillRect(l, top, a - l, hgt);
-            if (b < rgt) ctx.fillRect(b, top, rgt - b, hgt);
-            for (const o of cfg.overrides) {
-              if (o.stream !== s.key) continue;
-              ctx.fillStyle = (fileById(o.fileId)?.color ?? '#888888') + '22';
-              const oa = Math.max(l, X(o.from));
-              const ob = Math.min(rgt, X(o.to));
-              if (ob > oa) ctx.fillRect(oa, top, ob - oa, hgt);
-            }
-            ctx.restore();
-          },
+    const u = new uPlot(
+      {
+        width,
+        height: 180,
+        series,
+        scales: { x: { time: true, min: state.view?.min ?? win.min, max: state.view?.max ?? win.max } },
+        axes: [
+          { stroke: axisColor, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid } },
+          { stroke: axisColor, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid }, size: 50 },
         ],
-        setSelect: [
-          (u) => {
-            if (u.select.width < 3) return;
-            const from = Math.round(u.posToVal(u.select.left, 'x'));
-            const to = Math.round(u.posToVal(u.select.left + u.select.width, 'x'));
-            state.selection = { from, to };
-            for (const c of charts) if (c !== u) c.setSelect({ left: u.select.left, width: u.select.width, top: 0, height: c.bbox.height / devicePixelRatio }, false);
-            renderSelectionBar();
-          },
-        ],
+        legend: { show: true, live: true },
+        cursor: { sync: { key: 'm', setSeries: false }, drag: { x: true, y: false, setScale: false } },
+        select: { show: true },
+        hooks: {
+          drawClear: [
+            (u) => {
+              const { ctx } = u;
+              const { left: l, top, width: w, height: hgt } = u.bbox;
+              const rgt = l + w;
+              const X = (t) => Math.max(l, Math.min(rgt, u.valToPos(t, 'x', true)));
+              ctx.save();
+              ctx.fillStyle = shade;
+              const a = X(range.start);
+              const b = X(range.end);
+              if (a > l) ctx.fillRect(l, top, a - l, hgt);
+              if (b < rgt) ctx.fillRect(b, top, rgt - b, hgt);
+              for (const o of state.overrides) {
+                if (o.stream !== s.key) continue;
+                ctx.fillStyle = (fileById(o.fileId)?.color ?? '#888888') + '2a';
+                const oa = X(o.from);
+                const ob = X(o.to);
+                if (ob > oa) ctx.fillRect(oa, top, ob - oa, hgt);
+              }
+              ctx.restore();
+            },
+          ],
+          setSelect: [
+            (u) => {
+              if (u.select.width < 3) return;
+              state.selection = { from: Math.round(u.posToVal(u.select.left, 'x')), to: Math.round(u.posToVal(u.select.left + u.select.width, 'x')) };
+              for (const c of charts) if (c !== u) c.setSelect({ left: u.select.left, width: u.select.width, top: 0, height: c.bbox.height / devicePixelRatio }, false);
+              renderSelectionBar();
+            },
+          ],
+        },
       },
-    };
-    const u = new uPlot(opts, data, wrap);
+      data,
+      wrap
+    );
     charts.push(u);
-  }
-
-  if (state.view) {
-    host.prepend(h('div', { class: 'zoom-bar' }, `Zoomed to ${fmtClock(state.view.min)} – ${fmtClock(state.view.max)}`, h('button', { class: 'btn small', onclick: () => { state.view = null; render(); } }, 'Show all')));
   }
   if (!streams.length) host.append(h('p', { class: 'muted' }, 'These files contain no data that can be charted.'));
   if (state.selection) {
-    const sel = state.selection;
     for (const c of charts) {
-      const left = c.valToPos(sel.from, 'x');
-      const right = c.valToPos(sel.to, 'x');
-      c.setSelect({ left, width: right - left, top: 0, height: c.bbox.height / devicePixelRatio }, false);
+      const left = c.valToPos(state.selection.from, 'x');
+      c.setSelect({ left, width: c.valToPos(state.selection.to, 'x') - left, top: 0, height: c.bbox.height / devicePixelRatio }, false);
     }
   }
 }
@@ -543,16 +592,13 @@ async function exportFile() {
   } catch (err) {
     return toast(err.message, 'error', 7000);
   }
-  const base = primary.activity.name.replace(/\.[^.]+$/, '');
-  const name = `${base}-merged.${format}`;
+  const name = `${primary.activity.name.replace(/\.[^.]+$/, '')}-merged.${format}`;
   const dir = primary.path ? primary.path.replace(/[\\/][^\\/]*$/, '') : null;
-
   if (window.api) {
     const saved = await window.api.saveFile({ defaultPath: dir ? `${dir}${dir.includes('\\') ? '\\' : '/'}${name}` : name, ext: format, data });
     if (saved) toast(`Saved ${saved}`, 'ok', 6000);
   } else {
-    const blob = new Blob([data], { type: format === 'fit' ? 'application/octet-stream' : 'application/xml' });
-    const a = h('a', { href: URL.createObjectURL(blob), download: name });
+    const a = h('a', { href: URL.createObjectURL(new Blob([data])), download: name });
     document.body.append(a);
     a.click();
     a.remove();
@@ -561,6 +607,11 @@ async function exportFile() {
 }
 
 // ---------------------------------------------------------------- render
+function setTab(tab) {
+  state.tab = tab;
+  render();
+}
+
 function render() {
   if (state.files.length) {
     const range = currentRange();
@@ -569,15 +620,23 @@ function render() {
     state.merged = null;
   }
   $('export-btn').disabled = !state.merged?.records.length;
-  renderSidebar();
+  for (const t of document.querySelectorAll('.tab')) {
+    const on = t.dataset.tab === state.tab;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', String(on));
+  }
+  $('view-files').hidden = state.tab !== 'files';
+  $('view-charts').hidden = state.tab !== 'charts';
+  renderFilesView();
   renderSelectionBar();
   renderCharts();
 }
 
 // ---------------------------------------------------------------- wiring
 $('open-btn').addEventListener('click', openDialog);
-$('open-btn-2').addEventListener('click', openDialog);
 $('export-btn').addEventListener('click', exportFile);
+for (const t of document.querySelectorAll('.tab')) t.addEventListener('click', () => setTab(t.dataset.tab));
+for (const b of document.querySelectorAll('[data-theme-choice]')) b.addEventListener('click', () => setTheme(b.dataset.themeChoice));
 $('file-input').addEventListener('change', async (e) => {
   await readBrowserFiles([...e.target.files]);
   e.target.value = '';
@@ -598,10 +657,10 @@ window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.sele
 let resizeTimer;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => { const w = Math.max(400, $('charts').clientWidth - 8); for (const c of charts) c.setSize({ width: w, height: 170 }); }, 100);
+  resizeTimer = setTimeout(() => { const w = Math.max(400, $('charts').clientWidth - 2); for (const c of charts) c.setSize({ width: w, height: 180 }); }, 100);
 });
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => state.files.length && renderCharts());
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => state.tab === 'charts' && renderCharts());
 
-// Expose for automated UI tests.
 window.__state = state;
+syncThemeButtons();
 render();
