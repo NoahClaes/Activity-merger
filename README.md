@@ -33,3 +33,11 @@ Code layout:
 - `src/core/` – parsing (`parse.js`), merging, statistics and auto-align (`merge.js`), and FIT/TCX/GPX writers (`export.js`). This is plain JavaScript with no Electron dependency.
 - `src/renderer/` – the UI (charts use uPlot). It also works in a normal browser, where it falls back to a file picker and downloads.
 - `src/main/` – the Electron main process and preload (file dialogs).
+
+## Builds
+
+GitHub Actions (`.github/workflows/build-windows.yml`) builds on Windows for every push to `main`:
+- `Activity Merger-<version>-setup.exe`, the installer (Start menu entry, desktop shortcut, uninstaller)
+- `Activity Merger-<version>-portable.exe`, which runs without installing
+
+Download them from the run's **Artifacts**. Pushing a tag like `v1.0.0` also publishes them as a GitHub Release.
